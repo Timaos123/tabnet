@@ -9,6 +9,7 @@ from sklearn.metrics import (
     log_loss,
     balanced_accuracy_score,
     mean_squared_log_error,
+    f1_score
 )
 import torch
 
@@ -39,11 +40,7 @@ def UnsupervisedLoss(y_pred, embedded_x, obf_vars, eps=1e-9):
     """
     errors = y_pred - embedded_x
     reconstruction_errors = torch.mul(errors, obf_vars) ** 2
-    batch_means = torch.mean(embedded_x, dim=0)
-    batch_means[batch_means == 0] = 1
-
-    batch_stds = torch.std(embedded_x, dim=0) ** 2
-    batch_stds[batch_stds == 0] = batch_means[batch_stds == 0]
+    batch_stds = torch.std(embedded_x, dim=0) ** 2 + eps
     features_loss = torch.matmul(reconstruction_errors, 1 / batch_stds)
     # compute the number of obfuscated variables to reconstruct
     nb_reconstructed_variables = torch.sum(obf_vars, dim=1)
@@ -51,24 +48,6 @@ def UnsupervisedLoss(y_pred, embedded_x, obf_vars, eps=1e-9):
     features_loss = features_loss / (nb_reconstructed_variables + eps)
     # here we take the mean per batch, contrary to the paper
     loss = torch.mean(features_loss)
-    return loss
-
-
-def UnsupervisedLossNumpy(y_pred, embedded_x, obf_vars, eps=1e-9):
-    errors = y_pred - embedded_x
-    reconstruction_errors = np.multiply(errors, obf_vars) ** 2
-    batch_means = np.mean(embedded_x, axis=0)
-    batch_means = np.where(batch_means == 0, 1, batch_means)
-
-    batch_stds = np.std(embedded_x, axis=0, ddof=1) ** 2
-    batch_stds = np.where(batch_stds == 0, batch_means, batch_stds)
-    features_loss = np.matmul(reconstruction_errors, 1 / batch_stds)
-    # compute the number of obfuscated variables to reconstruct
-    nb_reconstructed_variables = np.sum(obf_vars, axis=1)
-    # take the mean of the reconstructed variable errors
-    features_loss = features_loss / (nb_reconstructed_variables + eps)
-    # here we take the mean per batch, contrary to the paper
-    loss = np.mean(features_loss)
     return loss
 
 
@@ -403,6 +382,41 @@ class RMSLE(Metric):
         return mean_squared_log_error(y_true, y_score)
 
 
+class F1_score(Metric):
+    """
+    Mean squared logarithmic error regression loss.
+    Scikit-implementation:
+    https://scikit-learn.org/stable/modules/generated/sklearn.metrics.f1_score.html
+    Note: In order to avoid error, negative predictions are clipped to 0.
+    This means that you should clip negative predictions manually after calling predict.
+    """
+
+    def __init__(self):
+        self._name = "f1_score"
+        self._maximize = False
+
+    def __call__(self, y_true, y_score):
+        """
+        Compute RMSLE of predictions.
+
+        Parameters
+        ----------
+        y_true : np.ndarray
+            Target matrix or vector
+        y_score : np.ndarray
+            Score matrix or vector
+
+        Returns
+        -------
+        float
+            RMSLE of predictions vs targets.
+        """
+
+        # print(y_true.shape,y_score.shape)
+        y_score=np.argmax(y_score, axis=1)
+        return -f1_score(y_true, y_score,average="macro")
+
+
 class UnsupervisedMetric(Metric):
     """
     Unsupervised metric
@@ -433,41 +447,6 @@ class UnsupervisedMetric(Metric):
         """
         loss = UnsupervisedLoss(y_pred, embedded_x, obf_vars)
         return loss.item()
-
-
-class UnsupervisedNumpyMetric(Metric):
-    """
-    Unsupervised metric
-    """
-
-    def __init__(self):
-        self._name = "unsup_loss_numpy"
-        self._maximize = False
-
-    def __call__(self, y_pred, embedded_x, obf_vars):
-        """
-        Compute MSE (Mean Squared Error) of predictions.
-
-        Parameters
-        ----------
-        y_pred : torch.Tensor or np.array
-            Reconstructed prediction (with embeddings)
-        embedded_x : torch.Tensor
-            Original input embedded by network
-        obf_vars : torch.Tensor
-            Binary mask for obfuscated variables.
-            1 means the variables was obfuscated so reconstruction is based on this.
-
-        Returns
-        -------
-        float
-            MSE of predictions vs targets.
-        """
-        return UnsupervisedLossNumpy(
-            y_pred,
-            embedded_x,
-            obf_vars
-        )
 
 
 class RMSE(Metric):
